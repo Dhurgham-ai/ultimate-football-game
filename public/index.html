@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ultimate Football Game</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #222; }
+    canvas { display: block; margin: auto; background: #4CAF50; }
+    #hud { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      color: white; font-family: sans-serif; font-size: 20px; }
+    #welcomeScreen { position: fixed; inset: 0; background: linear-gradient(to bottom right,#2c3e50,#27ae60);
+      display: flex; justify-content: center; align-items: center; z-index: 1000; color: white; font-family: 'Segoe UI', sans-serif; }
+    #welcomeContent { text-align: center; background: rgba(0,0,0,0.6); padding: 30px; border-radius: 15px; box-shadow: 0 0 20px #000; }
+    #welcomeContent h1 { font-size: 36px; margin-bottom: 20px; }
+    #welcomeContent p { font-size: 18px; margin-bottom: 30px; }
+    #welcomeContent button { font-size: 20px; padding: 10px 20px; background: #f39c12; border: none; border-radius: 8px; cursor: pointer; transition: background 0.3s; }
+    #welcomeContent button:hover { background: #e67e22; }
+    #controls { position:absolute; bottom:20px; left:20px; }
+  </style>
+</head>
+<body>
+  <div id="hud">Red: 0 | Green: 0 | Time: 60</div>
+  <div id="welcomeScreen">
+    <div id="welcomeContent">
+      <h1>🏆 Ultimate Football Game</h1>
+      <p>Control the green player using arrow keys or buttons below.<br>
+        Tackle, shoot, and score against the red AI player.<br>
+        Collect power-ups for speed and freeze effects!</p>
+      <button id="startBtn">Start Match</button>
+      <button id="stopBtn">Stop Game</button>
+      <p style="margin-top:20px;">
+      <a href="https://github.com/Dhurgham-ai" target="_blank"
+         style="color:#f39c12; text-decoration:none; font-size:18px;">
+         🌐 Visit Dhurgham's GitHub
+      </a>
+    </p>
+
+
+    </div>
+    
+
+
+  </div>
+
+  <canvas id="gameCanvas" width="800" height="400"></canvas>
+  <audio id="kickSound" src="soccer-ball-kick-37625.mp3"></audio>
+  <audio id="goalSound" src="https://www.soundjay.com/button/sounds/button-10.mp3"></audio>
+
+  <div id="controls">
+    <button id="upBtn">⬆️</button><br>
+    <button id="leftBtn">⬅️</button>
+    <button id="downBtn">⬇️</button>
+    <button id="rightBtn">➡️</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    if (!canvas || !ctx) { alert("Canvas not available."); }
+
+    // Global state
+    let score = { red: 0, green: 0 };
+    let timeLeft = 60;
+    let gameOver = false;
+    let tackleCooldown = 0;
+    let ballOwner = null;
+    let redBoost = false;
+    let freezeTimer = 0;
+
+    const redImg = new Image();
+    redImg.src = "red-player.png";
+    const greenImg = new Image();
+    greenImg.src = "green-player.png";
+
+    const kickSound = document.getElementById("kickSound");
+    const goalSound = document.getElementById("goalSound");
+
+    const playerSize = 20;
+    const ballRadius = 10;
+    const baseSpeed = 3;
+    const friction = 0.98;
+
+    const red = { x: 100, y: 200, color: "red", angle: 0 };
+    const green = { x: 700, y: 200, color: "green",
+      up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight" };
+    const players = [red, green];
+
+    const goalkeeper = { x: 20, y: 200, width: 10, height: 60, dy: 2 };
+    const ball = { x: 400, y: 200, dx: 0, dy: 0 };
+    const keys = {};
+    const goal = { width: 10, height: 100 };
+    const powerUps = [];
+    const powerUpTypes = ["speed", "freeze"];
+
+   
+    function press(key) { keys[key] = true; setTimeout(() => keys[key] = false, 100); }
+    document.addEventListener("keydown", e => keys[e.key] = true);
+    document.addEventListener("keyup", e => keys[e.key] = false);
+
+    document.getElementById("upBtn").onclick = () => press("ArrowUp");
+    document.getElementById("downBtn").onclick = () => press("ArrowDown");
+    document.getElementById("leftBtn").onclick = () => press("ArrowLeft");
+    document.getElementById("rightBtn").onclick = () => press("ArrowRight");
+
+    
+    function drawField() {
+      ctx.fillStyle = "#4CAF50";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = "#fff";
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2, 0);
+      ctx.lineTo(canvas.width / 2, canvas.height);
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, (canvas.height - goal.height) / 2, goal.width, goal.height);
+      ctx.fillRect(canvas.width - goal.width, (canvas.height - goal.height) / 2, goal.width, goal.height);
+    }
+
+    function drawPlayer(p) {
+      const img = p.color === "red" ? redImg : greenImg;
+      if (img.complete && img.naturalWidth) {
+        ctx.drawImage(img, p.x - playerSize / 2, p.y - playerSize / 2, playerSize, playerSize);
+      } else {
+        
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, playerSize / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawBall() {
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#000";
+      ctx.stroke();
+    }
+
+    function drawGoalkeeper() {
+      ctx.fillStyle = "black";
+      ctx.fillRect(goalkeeper.x, goalkeeper.y - goalkeeper.height / 2, goalkeeper.width, goalkeeper.height);
+    }
+
+    function drawPowerUps() {
+      powerUps.forEach(p => {
+        ctx.fillStyle = p.type === "speed" ? "yellow" : "cyan";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    
+    function movePlayers() {
+      
+      const dx = ball.x - red.x;
+      const dy = ball.y - red.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const speedRed = redBoost ? baseSpeed * 1.5 : baseSpeed * 0.8;
+      if (dist > 1) {
+        red.angle = Math.atan2(dy, dx);
+        red.x += (dx / dist) * speedRed;
+        red.y += (dy / dist) * speedRed;
+      }
+
+      
+      if (dist < playerSize + ballRadius + 5 && ballOwner !== "green") {
+        const goalX = canvas.width - goal.width - ballRadius;
+        const goalY = canvas.height / 2;
+        const shotAngle = Math.atan2(goalY - red.y, goalX - red.x);
+        ball.dx = Math.cos(shotAngle) * 6;
+        ball.dy = Math.sin(shotAngle) * 6;
+        kickSound.play();
+        ballOwner = "red";
+      }
+
+      
+      const speedGreen = baseSpeed;
+      if (keys[green.up] && green.y - playerSize / 2 > 0) green.y -= speedGreen;
+      if (keys[green.down] && green.y + playerSize / 2 < canvas.height) green.y += speedGreen;
+      if (keys[green.left] && green.x - playerSize / 2 > 0) green.x -= speedGreen;
+      if (keys[green.right] && green.x + playerSize / 2 < canvas.width) green.x += speedGreen;
+
+      
+      const tackleDist = playerSize + ballRadius + 5;
+      const dxGreen = ball.x - green.x;
+      const dyGreen = ball.y - green.y;
+      const distGreen = Math.sqrt(dxGreen * dxGreen + dyGreen * dyGreen);
+      if (distGreen < tackleDist && tackleCooldown === 0) {
+        const angle = Math.atan2(dyGreen, dxGreen);
+        ball.dx = Math.cos(angle) * 5;
+        ball.dy = Math.sin(angle) * 5;
+        kickSound.play();
+        tackleCooldown = 30;
+        ballOwner = "green";
+      }
+
+      
+      red.x = Math.max(playerSize / 2, Math.min(canvas.width - playerSize / 2, red.x));
+      red.y = Math.max(playerSize / 2, Math.min(canvas.height - playerSize / 2, red.y));
+      green.x = Math.max(playerSize / 2, Math.min(canvas.width - playerSize / 2, green.x));
+      green.y = Math.max(playerSize / 2, Math.min(canvas.height - playerSize / 2, green.y));
+    }
+
+    function moveGoalkeeper() {
+      goalkeeper.y += goalkeeper.dy;
+      if (goalkeeper.y - goalkeeper.height / 2 < 0 || goalkeeper.y + goalkeeper.height / 2 > canvas.height) {
+        goalkeeper.dy *= -1;
+      }
+    }
+
+    function updateBall() {
+      if (freezeTimer > 0) { freezeTimer--; return; }
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+      ball.dx *= friction;
+      ball.dy *= friction;
+
+      
+      if (
+        ball.x + ballRadius > goalkeeper.x &&
+        ball.x - ballRadius < goalkeeper.x + goalkeeper.width &&
+        ball.y > goalkeeper.y - goalkeeper.height / 2 &&
+        ball.y < goalkeeper.y + goalkeeper.height / 2
+      ) {
+        ball.dx = -ball.dx;
+        ball.dy *= 0.5;
+      }
+
+      
+      if (ball.y - ballRadius < 0 || ball.y + ballRadius > canvas.height) {
+        ball.dy = -Math.sign(ball.dy) * Math.max(Math.abs(ball.dy), 3);
+      }
+
+      
+      if (ball.x - ballRadius < 0 &&
+          !(ball.y > (canvas.height - goal.height) / 2 && ball.y < (canvas.height + goal.height) / 2)) {
+        ball.dx = -Math.sign(ball.dx) * Math.max(Math.abs(ball.dx), 3);
+      }
+
+      
+      if (ball.x + ballRadius > canvas.width &&
+          !(ball.y > (canvas.height - goal.height) / 2 && ball.y < (canvas.height + goal.height) / 2)) {
+        ball.dx = -Math.sign(ball.dx) * Math.max(Math.abs(ball.dx), 3);
+      }
+
+      
+      if (ball.x - ballRadius < goal.width &&
+          ball.y > (canvas.height - goal.height) / 2 &&
+          ball.y < (canvas.height + goal.height) / 2) {
+        score.green++; goalSound.play(); resetBall();
+      }
+      if (ball.x + ballRadius > canvas.width - goal.width &&
+          ball.y > (canvas.height - goal.height) / 2 &&
+          ball.y < (canvas.height + goal.height) / 2) {
+        score.red++; goalSound.play(); resetBall();
+      }
+    }
+
+    function checkCollision() {
+      players.forEach(p => {
+        const dx = ball.x - p.x;
+        const dy = ball.y - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < playerSize / 2 + ballRadius) {
+          const angle = Math.atan2(dy, dx);
+          ball.dx = Math.cos(angle) * 5;
+          ball.dy = Math.sin(angle) * 5;
+          kickSound.play();
+        }
+      });
+    }
+
+    function checkPowerUpPickup() {
+      players.forEach(p => {
+        powerUps.forEach((pu, i) => {
+          const dx = p.x - pu.x;
+          const dy = p.y - pu.y;
+          if (Math.sqrt(dx * dx + dy * dy) < playerSize / 2 + pu.radius) {
+            if (pu.type === "speed") {
+              if (p === red) redBoost = true;
+              setTimeout(() => { if (p === red) redBoost = false; }, 5000);
+            } else if (pu.type === "freeze") {
+              freezeTimer = 180;
+            }
+            powerUps.splice(i, 1);
+          }
+        });
+      });
+    }
+
+    function spawnPowerUp() {
+      const type = powerUps.length % 2 === 0 ? "speed" : "freeze";
+      const x = Math.random() * (canvas.width - 40) + 20;
+      const y = Math.random() * (canvas.height - 40) + 20;
+      powerUps.push({ x, y, type, radius: 10 });
+    }
+
+    let gameLoopId;
+    function gameLoop() {
+      if (gameOver) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      movePlayers();
+      moveGoalkeeper();
+      updateBall();
+      checkCollision();
+      checkPowerUpPickup();
+
+      drawField();
+      drawPowerUps();
+      players.forEach(drawPlayer);
+      drawBall();
+      drawGoalkeeper();
+
+      document.getElementById("hud").textContent =
+        `Red: ${score.red} | Green: ${score.green} | Time: ${timeLeft}`;
+
+      if (tackleCooldown > 0) tackleCooldown--;
+      gameLoopId = requestAnimationFrame(gameLoop);
+    }
+
+    function resetBall() {
+      ballOwner = null;
+      ball.x = canvas.width / 2;
+      ball.y = canvas.height / 2;
+      ball.dx = 0;
+      ball.dy = 0;
+      red.x = 100; red.y = canvas.height / 2;
+      green.x = canvas.width - 100; green.y = canvas.height / 2;
+    }
+
+    
+    const timerId = setInterval(() => {
+      if (timeLeft > 0) {
+        timeLeft--;
+      } else if (!gameOver) {
+        gameOver = true;
+        const result = score.red > score.green ? "Red Wins!" :
+                       score.green > score.red ? "Green Wins!" : "It's a Draw!";
+        alert(result);
+        cancelAnimationFrame(gameLoopId);
+        clearInterval(timerId);
+      }
+    }, 1000);
+
+    
+    function startGame() {
+      document.getElementById("welcomeScreen").style.display = "none";
+      gameOver = false;
+      timeLeft = 60;
+      score.red = 0; score.green = 0;
+      resetBall();
+      gameLoop();
+    }
+    function stopGame() {
+      gameOver = true;
+      cancelAnimationFrame(gameLoopId);
+      document.getElementById("welcomeScreen").style.display = "flex";
+    }
+
+    document.getElementById("startBtn").onclick = startGame;
+    document.getElementById("stopBtn").onclick = stopGame;
+
+    
+    setInterval(spawnPowerUp, 8000);
+  </script>
+  
+
+
+</body>
+</html>
